@@ -573,17 +573,36 @@ class RiskGUI:
         """Handle reinforcement for AI players"""
         if self.current_player.reinforcements > 0:
             # Call AI's reinforcement strategy
-            
             self.current_player._reinforcement_phase(self.game, self)
-            pygame.time.delay(1000)  # 1 second delay between reinforcements
+            # Process events during reinforcement
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    return
+            self.render()
+            pygame.time.delay(1000)  # Increased delay for better visibility
 
     def handle_ai_attack(self):
-        print('fourmulating attack')
+        print('formulating attack')
         self.current_player._attack_phase(self.game, self)
-        print('fourmulating attack onde')
+        # Process events during attack phase
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                return
+        self.render()
+        pygame.time.delay(1000)  # Increased delay for better visibility
+        print('formulating attack done')
 
     def handle_ai_fortify(self):
         self.current_player._fortify_phase(self.game, self)
+        # Process events during fortify phase
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                return
+        self.render()
+        pygame.time.delay(1000)  # Increased delay for better visibility
 
     def render(self):
         # Clear screen with ocean blue background
@@ -664,40 +683,55 @@ class RiskGUI:
                             print(AIPlayer)
 
                             print(self.current_player.__class__ is AIPlayer)
-                            # if it’s the AI’s turn, play out its entire turn in one go
+                            # if it's the AI's turn, play out its entire turn in one go
                             # if isinstance(self.current_player, AIPlayer):
                             if isinstance(self.current_player, AIPlayer) or 'AIPlayer' in str(self.current_player.__class__):
-                                # 1) Reinforcement
+                                # Start the AI's turn
+                                self.game.start_turn()
                                 print(' ****************** Ai player')
                                 self.showing_event = False
                                 
+                                # Process AI reinforcement phase
                                 while self.current_player.reinforcements > 0:
                                     self.handle_ai_reinforcement()
+                                    # Process events and render during AI actions
+                                    for event in pygame.event.get():
+                                        if event.type == pygame.QUIT:
+                                            pygame.quit()
+                                            return
+                                    self.render()
+                                    pygame.time.delay(1000)  # Increased delay for better visibility
+                                
                                 print('reinforcement done')
                                 self.phase = 'attack'
 
-                                # 2) Attack phase
-                                # you’ll need to write a small helper (e.g. self.handle_ai_attack())
-                                # that chooses valid attacks until no more
+                                # Process AI attack phase
                                 self.handle_ai_attack()
+                                # Process events and render after attack phase
+                                for event in pygame.event.get():
+                                    if event.type == pygame.QUIT:
+                                        pygame.quit()
+                                        return
+                                self.render()
+                                pygame.time.delay(1000)  # Increased delay for better visibility
                                 print('attack done')
 
-                                # 3) Fortify phase
-                                # similarly, implement and call self.handle_ai_fortify()
+                                # Process AI fortify phase
                                 self.phase = 'fortify'
                                 self.handle_ai_fortify()
+                                # Process events and render after fortify phase
+                                for event in pygame.event.get():
+                                    if event.type == pygame.QUIT:
+                                        pygame.quit()
+                                        return
+                                self.render()
+                                pygame.time.delay(1000)  # Increased delay for better visibility
                                 print('fortify done')
                                 self.phase = 'reinforcement'
 
-                                # 4) End its turn (invoke the same steps you do on human end-turn)
-                                
-                                # No effect on playerrrr *********************************************************************************************************************************************************************************************************************************************************
-
-
-
+                                # End AI turn
                                 event = self.game.end_turn()
                                 self.show_event_popup(event)
-
                                 self.current_player = self.game.current_player
 
                             else:

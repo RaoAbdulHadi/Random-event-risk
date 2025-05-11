@@ -8,6 +8,7 @@ import pickle
 from datetime import datetime
 import copy
 
+
 sampleAiPlayer = None
 
 class Territory:
@@ -419,12 +420,6 @@ class RiskGame:
             defender.troops = attacker.troops - 1
             attacker.troops = 1
             
-            # Draw a card when conquering a territory
-            if self.card_deck:
-                card = self.card_deck.pop()
-                self.current_player.add_card(card)
-                # print(f"{self.current_player.name} drew a {card.type} card for conquering {defender.name}")
-            
             # Update continent control statistics
             self._update_continent_control()
             
@@ -462,9 +457,11 @@ class RiskGame:
         # Calculate reinforcements for the current player
         self.current_player.reinforcements = self.calculate_reinforcements(self.current_player)
         
-        # Draw a card if player conquered a territory last turn
-        if self.current_player.territories:
-            self.draw_card(self.current_player)
+        # Draw one card at the start of turn
+        if self.card_deck:
+            card = self.card_deck.pop()
+            self.current_player.add_card(card)
+            print(f"{self.current_player.name} drew a {card.type} card for territory {card.territory}")
         
         print(f"\n{self.current_player.name}'s turn")
         print(f"Available reinforcements: {self.current_player.reinforcements}")
@@ -1006,7 +1003,8 @@ class AIPlayer(Player):
             actionScore, action = self.choose_attack(game)
             if action and actionScore > 0: # to chcek whether it should be negative or positive
                 fromName, toName = action
-                fromTer, toTer = self.territories[fromName], self.territories[toName]
+                fromTer = game.territories[fromName]  # Use game's territories dictionary
+                toTer = game.territories[toName]      # Use game's territories dictionary
                 gui.selected_territory = fromTer
                 gui.target_territory = toTer
                 gui.render()
@@ -1019,23 +1017,6 @@ class AIPlayer(Player):
                 print('no action is best ',action, ' ', actionScore)
                 break
 
-            # for attacker in self.territories:
-            #     if attacker.troops > 1:
-                    # for connection in attacker.connections:
-                    #     defender = game.territories[connection]
-                    #     if defender.owner != self:
-                    #         # Calculate attack score using Monte Carlo
-                    #         # attack_score = self.monte_carlo_simulate_attack(attacker, defender)
-                    #         attack_score = self.monte_carlo_simulate_attack(attacker, defender)
-                    #         # Add strategic value for target continent
-                    #         if defender.continent == self.target_continent:
-                    #             attack_score *= 1.5
-                            
-                    #         # Only consider attacks with good chances of success
-                    #         if attack_score > 0.4:  # Lowered threshold to be more aggressive
-                    #             possible_attacks.append((attacker, defender, attack_score))
-                    
-                
             events = pygame.event.get()
             gui.render()
             pygame.time.delay(2000)
