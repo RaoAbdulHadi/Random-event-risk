@@ -1,6 +1,6 @@
 import pygame
 import sys
-from typing import Dict, Any, Optional, Tuple
+# from typing import Dict, Any, Optional, Tuple
 
 class MenuGUI:
     def __init__(self):

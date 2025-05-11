@@ -6,6 +6,9 @@ from typing import List, Dict, Tuple, Optional
 import json
 import pickle
 from datetime import datetime
+import copy
+
+sampleAiPlayer = None
 
 class Territory:
     def __init__(self, name: str, continent: str):
@@ -86,7 +89,7 @@ class Player:
         types = [card.type for card in self.cards[:3]]
         
         # Three of a kind
-        if types.count(types[0]) >= 3:
+        if types.count(types[0]) >= 3:  
             if types[0] == "infantry":
                 return 4
             elif types[0] == "cavalry":
@@ -112,7 +115,8 @@ class Player:
     def add_card(self, card: Card):
         self.cards.append(card)
         if len(self.cards) > self.max_cards:
-            print(f"Warning: {self.name} has more than {self.max_cards} cards and must trade!")
+            self.trade_cards()
+            # print(f"Warning: {self.name} has more than {self.max_cards} cards and must trade!")
 
 class RandomEvent:
     def __init__(self, name: str, description: str, effect: callable):
@@ -255,6 +259,9 @@ class RiskGame:
         print(f"Description: {event.description}")
         event.effect(self.current_player)
 
+        return event
+        
+
     def initialize_game(self):
         # Initialize territories
         territories_data = {
@@ -380,9 +387,9 @@ class RiskGame:
         return attacker_losses, defender_losses
 
     def attack(self, attacker: Territory, defender: Territory) -> bool:
-        if attacker.owner != self.current_player:
+        if attacker.owner.name != self.current_player.name:
             raise ValueError("Not your territory")
-        if defender.owner == self.current_player:
+        if defender.owner.name == self.current_player.name:
             raise ValueError("Cannot attack your own territory")
         if defender.name not in attacker.connections:
             raise ValueError("Territories are not connected")
@@ -416,7 +423,7 @@ class RiskGame:
             if self.card_deck:
                 card = self.card_deck.pop()
                 self.current_player.add_card(card)
-                print(f"{self.current_player.name} drew a {card.type} card for conquering {defender.name}")
+                # print(f"{self.current_player.name} drew a {card.type} card for conquering {defender.name}")
             
             # Update continent control statistics
             self._update_continent_control()
@@ -465,12 +472,27 @@ class RiskGame:
 
     def end_turn(self):
         # Trigger random event
-        self.trigger_random_event()
+        event = self.trigger_random_event()
         
         # Move to next player
-        current_index = self.players.index(self.current_player)
+        current_index = -1
+        for ind,item in enumerate(self.players):
+            if item.name == self.current_player.name:
+                current_index = ind
+                break
+        
+        # current_index = self.players.index(self.current_player)
+        if current_index == -1:
+            raise Exception('No player found for next turn')
+        
         next_index = (current_index + 1) % len(self.players)
         self.current_player = self.players[next_index]
+        
+        print('the next player is ', self.current_player.name, self.current_player.__class__ , 'among ')
+        # for player in self.players:
+        #     print('player: ', player.name, type(player), end='')
+        # print()
+        return event
 
     def check_win_condition(self) -> bool:
         # Check if any player has been eliminated
@@ -711,8 +733,9 @@ class RiskGame:
         return None
         
 class AIPlayer(Player):
-    def __init__(self, name: str, color: Tuple[int, int, int]):
+    def __init__(self, name: str, color: Tuple[int, int, int], depth: int = 3):
         super().__init__(name, color)
+        self.max_depth = depth
         self.target_continent = None
         self.defensive_territories = set()
         self.offensive_territories = set()
@@ -724,6 +747,140 @@ class AIPlayer(Player):
             'enemy_neighbors': -2.0,      # -2 per weak region
             'army_strength': 0.5         # ± based on total count
         }
+
+        
+
+    def heuristic(self, state: RiskGame, root_owner: Player) -> int:
+        """
+        Heuristic: net change in number of territories for root_owner
+        compared to initial count when search began.
+        """
+        # Count territories at current state
+        current_count = sum(1 for t in state.territories.values() if t.owner.name == root_owner.name)
+        # Use stored initial count on the AI instance
+        # print('depth 0 reached ', current_count, self.initial_count)
+        defenderLoss = 0
+        for terr in state.territories.values():
+            if terr.owner.name != root_owner.name:
+                defenderLoss = terr.owner.battle_stats['attacks_lost']
+                break
+
+        return (current_count - self.initial_count + defenderLoss)
+
+    def generate_attack_actions(self, state: RiskGame, player: Player) -> List[Tuple[Territory, Territory]]:
+        """
+        Generate all valid (src, dest) attack moves for `player`.
+        """
+        actions = []
+        for src in state.territories.values():
+            if src.owner.name == player.name and src.troops > 1:
+                for conn_name in src.connections:
+                    dest = state.territories[conn_name]
+                    if dest.owner.name != player.name:
+                        actions.append((src.name, dest.name))
+        return actions
+
+    def apply_attack(self, state: RiskGame, action: Tuple[str, str], rootOwner = 'Unk') -> bool:
+        """
+        Apply one attack action on state's game.
+        Returns True if attack occurred, False if invalid.
+        """
+        src_name, dst_name = action
+        try:
+            # print('before attack ', len([ter for ter in state.territories.values() if ter.owner.name == rootOwner]))
+            state.attack(state.territories[src_name], state.territories[dst_name])
+            # print('before attack2 ', len([ter for ter in state.territories.values() if ter.owner.name == rootOwner]))
+            return True
+        except ValueError as e:
+            print('Cant attack ' , str(e) )
+            return False
+
+    def alpha_beta(self,
+                   state: RiskGame,
+                   depth: int,
+                   alpha: int,
+                   beta: int,
+                   maximizing: bool,
+                   root_owner: Player) -> Tuple[int, Optional[Tuple[str, str]]]:
+        """
+        Returns (value, best_action) at this node.
+        """
+        # print(f'current player {root_owner.name}')
+        if depth == 0:
+            # print('at depth 0')
+            return self.heuristic(state, root_owner), None
+
+        current_player = state.current_player if maximizing else self.get_opponent(state, root_owner)
+        actions = self.generate_attack_actions(state, current_player)
+        # print('possible actions ', len(actions))
+        if not actions:
+            # No possible attacks: evaluate state
+            # print('no actions left')
+            return self.heuristic(state, root_owner), None
+
+        debugVals = []
+
+        best_action = None
+        if maximizing:
+            # print('meximixing ',len([ter for ter in state.territories.values() if ter.owner.name == root_owner.name]))
+            value = float('-inf')
+            for action in actions:
+                new_state = copy.deepcopy(state)
+                new_state.current_player = current_player
+                self.apply_attack(new_state, action, root_owner.name)
+                # new_state.end_phase()  # proceed game phases if needed
+                v, _ = self.alpha_beta(new_state, depth - 1, alpha, beta, False, root_owner)
+                debugVals.append(v)
+                if v > value:
+                    value, best_action = v, action
+                alpha = max(alpha, value)
+                if alpha >= beta:
+                    break  # beta cutoff
+                
+            # print('returning ',value, ' ', best_action, ' ', 'maxi among:', debugVals)
+            return value, best_action
+        else:
+            # print('mininzing ',len([ter for ter in state.territories.values() if ter.owner.name == root_owner.name]))
+            value = float('inf')
+            for action in actions:
+                new_state = copy.deepcopy(state)
+                new_state.current_player = current_player
+                self.apply_attack(new_state, action, root_owner.name)
+                # new_state.end_phase()
+                v, _ = self.alpha_beta(new_state, depth - 1, alpha, beta, True, root_owner)
+                debugVals.append(v)
+                if v < value:
+                    value, best_action = v, action
+                beta = min(beta, value)
+                if beta <= alpha:
+                    break  # alpha cutoff
+            # print('returning ',value, ' ', best_action, ' ', 'mini among ', debugVals)
+            return value, best_action
+
+    def get_opponent(self, state: RiskGame, player: Player) -> Player:
+        # Simplest: pick next in players list
+        # tempPlayers = []
+        # for temp in state.players:
+            # tempPlayers.append([temp.name, temp.__class__ ])
+        # print('checking for player ', player, state.players)
+        idx = -1
+        for ind,item in enumerate(state.players):
+            if item.name == player.name:
+                idx = ind
+                break
+        # idx = state.players.index(player)
+        if idx == -1:
+            raise Exception('No player found for opponent')
+        
+        return state.players[(idx + 1) % len(state.players)]
+
+    def choose_attack(self, game: RiskGame) -> Optional[Tuple[str, str]]:
+        # Initialize root metrics
+        self.initial_count = sum(1 for t in game.territories.values() if t.owner == game.current_player)
+        # print('aplha beta called ', self.initial_count)
+        value, action = self.alpha_beta(game, self.max_depth, float('-inf'), float('inf'), True, game.current_player)
+        # print('aplha beta done')
+        return value,action
 
     def evaluate_territory(self, territory: Territory, game: 'RiskGame') -> float:
         """Evaluate a territory's strategic value"""
@@ -784,7 +941,7 @@ class AIPlayer(Player):
                 else:
                     self.offensive_territories.add(territory)
 
-    def _reinforcement_phase(self, game: 'RiskGame'):
+    def _reinforcement_phase(self, game: 'RiskGame', gui):
         """Place reinforcements strategically"""
         while self.reinforcements > 0:
             # Evaluate all territories
@@ -795,7 +952,12 @@ class AIPlayer(Player):
             
             # Reinforce the territory with highest score
             best_territory = max(territory_scores.items(), key=lambda x: x[1])[0]
+            gui.selected_territory = best_territory
             game.reinforce(best_territory)
+            
+            events = pygame.event.get()
+            gui.render()
+            pygame.time.delay(2000)
 
     def monte_carlo_simulate_attack(self, attacker: Territory, defender: Territory) -> float:
         """Simulate attack multiple times using Monte Carlo method"""
@@ -834,47 +996,72 @@ class AIPlayer(Player):
         # Return a score that considers both win rate and troop loss
         return win_rate * (1 - (avg_troops_lost / attacker.troops))
 
-    def _attack_phase(self, game: 'RiskGame'):
+    def _attack_phase(self, game: 'RiskGame', gui):
         """Execute attacks based on Monte Carlo simulation results"""
         # Get all possible attacks and evaluate them
         possible_attacks = []
-        for attacker in self.territories:
-            if attacker.troops > 1:
-                for connection in attacker.connections:
-                    defender = game.territories[connection]
-                    if defender.owner != self:
-                        # Calculate attack score using Monte Carlo
-                        attack_score = self.monte_carlo_simulate_attack(attacker, defender)
-                        
-                        # Add strategic value for target continent
-                        if defender.continent == self.target_continent:
-                            attack_score *= 1.5
-                        
-                        # Only consider attacks with good chances of success
-                        if attack_score > 0.4:  # Lowered threshold to be more aggressive
-                            possible_attacks.append((attacker, defender, attack_score))
+        print('entered in attack phase')
+
+        for _ in range(10):
+            actionScore, action = self.choose_attack(game)
+            if action and actionScore > 0: # to chcek whether it should be negative or positive
+                fromName, toName = action
+                fromTer, toTer = self.territories[fromName], self.territories[toName]
+                gui.selected_territory = fromTer
+                gui.target_territory = toTer
+                gui.render()
+                
+                pygame.time.delay(500)
+                print('ai player found the best action ',action)
+                self.apply_attack(game,action)
+                print('action taken')
+            else:
+                print('no action is best ',action, ' ', actionScore)
+                break
+
+            # for attacker in self.territories:
+            #     if attacker.troops > 1:
+                    # for connection in attacker.connections:
+                    #     defender = game.territories[connection]
+                    #     if defender.owner != self:
+                    #         # Calculate attack score using Monte Carlo
+                    #         # attack_score = self.monte_carlo_simulate_attack(attacker, defender)
+                    #         attack_score = self.monte_carlo_simulate_attack(attacker, defender)
+                    #         # Add strategic value for target continent
+                    #         if defender.continent == self.target_continent:
+                    #             attack_score *= 1.5
+                            
+                    #         # Only consider attacks with good chances of success
+                    #         if attack_score > 0.4:  # Lowered threshold to be more aggressive
+                    #             possible_attacks.append((attacker, defender, attack_score))
+                    
+                
+            events = pygame.event.get()
+            gui.render()
+            pygame.time.delay(2000)
         
         # Sort attacks by score
-        possible_attacks.sort(key=lambda x: x[2], reverse=True)
+        # possible_attacks.sort(key=lambda x: x[2], reverse=True)
         
         # Execute attacks
-        attacks_made = 0
-        max_attacks = 5  # Limit number of attacks per turn
+        # attacks_made = 0
+        # max_attacks = 5  # Limit number of attacks per turn
         
-        while attacks_made < max_attacks and possible_attacks:
-            attacker, defender, _ = possible_attacks[0]
-            try:
-                if game.attack(attacker, defender):
-                    attacks_made += 1
-                    # Update strategy after successful attack
-                    self._update_strategy(game)
-                    # Recalculate possible attacks
-                    possible_attacks = [a for a in possible_attacks 
-                                      if a[0].troops > 1 and a[1].troops > 0]
-            except ValueError:
-                possible_attacks.pop(0)
+        # while attacks_made < max_attacks and possible_attacks:
+        #     attacker, defender, _ = possible_attacks[0]
+        #     try:
+        #         if game.attack(attacker, defender):
+        #             attacks_made += 1
+        #             # Update strategy after successful attack
+        #             self._update_strategy(game)
+        #             # Recalculate possible attacks
+        #             possible_attacks = [a for a in possible_attacks 
+        #                               if a[0].troops > 1 and a[1].troops > 0]
+        #     except ValueError:
+        #         possible_attacks.pop(0)
 
-    def _fortify_phase(self, game: 'RiskGame'):
+
+    def _fortify_phase(self, game: 'RiskGame', gui):
         """Move troops to improve defensive position"""
         # Find territories that can fortify
         can_fortify = [t for t in self.territories if t.troops > 1]
@@ -907,7 +1094,15 @@ class AIPlayer(Player):
         if best_move:
             source, target, troops = best_move
             try:
+                gui.selected_territory = source
+                gui.render()
+                pygame.time.delay(500)
+                
+                events = pygame.event.get()
                 game.fortify(source, target, troops)
+                pygame.time.delay(2000)
+                gui.render()
+
             except ValueError:
                 pass
 
@@ -985,6 +1180,8 @@ def main():
                     ai_player = AIPlayer(name, colors[num_human_players + i])
                     ai_player.max_cards = int(result['max_cards'])
                     game.players.append(ai_player)
+                    # if not sampleAiPlayer:
+                    #     sampleAiPlayer = AIPlayer(name, colors[num_human_players + i])
                 
                 # Start the game
                 game.start_game()

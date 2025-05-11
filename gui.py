@@ -1,9 +1,9 @@
 import pygame
-from pygame.locals import *
 import math
+import random
+from pygame.locals import *
 from typing import Dict, Tuple, List
 from project import RiskGame, Territory, Player, AIPlayer
-import random
 
 # Initialize Pygame
 pygame.init()
@@ -56,6 +56,7 @@ class RiskGUI:
         
         # Player info button properties
         self.info_button_rect = pygame.Rect(self.screen_width - 150, 70, 120, 40)
+        self.infoClosure = pygame.Rect(self.screen_width - 150, 70, 120, 40)
         self.info_button_hovered = False
         self.showing_info = False
         
@@ -159,9 +160,9 @@ class RiskGUI:
         
         # Draw selection highlight
         if self.selected_territory == territory:
-            pygame.draw.circle(self.screen, self.WHITE, (x, y), 25, 3)  # Reduced from 35 to 25
+            pygame.draw.circle(self.screen, (0,200,0), (x, y), 25, 3)  # Reduced from 35 to 25
         elif self.target_territory == territory:
-            pygame.draw.circle(self.screen, (0, 255, 255), (x, y), 25, 3)
+            pygame.draw.circle(self.screen, (0, 50, 0), (x, y), 25, 3)
     
     def draw_connections(self):
         for territory in self.game.territories.values():
@@ -269,13 +270,7 @@ class RiskGUI:
                 pygame.time.delay(500)  # Short delay for visual feedback
                 self.selected_territory = None
 
-    def handle_ai_reinforcement(self):
-        """Handle reinforcement for AI players"""
-        if self.current_player.reinforcements > 0:
-            # Call AI's reinforcement strategy
-            self.current_player._reinforcement_phase(self.game)
-            pygame.time.delay(1000)  # 1 second delay between reinforcements
-
+    
     def handle_territory_click(self, territory: Territory):
         if self.phase == "reinforcement":
             if isinstance(self.current_player, AIPlayer):
@@ -570,13 +565,52 @@ class RiskGUI:
         close_rect = close_text.get_rect(center=close_button_rect.center)
         self.screen.blit(close_text, close_rect)
         
+        self.infoClosure = close_button_rect
+
         pygame.display.flip()
+
+    def handle_ai_reinforcement(self):
+        """Handle reinforcement for AI players"""
+        if self.current_player.reinforcements > 0:
+            # Call AI's reinforcement strategy
+            
+            self.current_player._reinforcement_phase(self.game, self)
+            pygame.time.delay(1000)  # 1 second delay between reinforcements
+
+    def handle_ai_attack(self):
+        print('fourmulating attack')
+        self.current_player._attack_phase(self.game, self)
+        print('fourmulating attack onde')
+
+    def handle_ai_fortify(self):
+        self.current_player._fortify_phase(self.game, self)
+
+    def render(self):
+        # Clear screen with ocean blue background
+        self.screen.fill(self.OCEAN_BLUE)
         
-        return close_button_rect
+        # Draw continent boundaries first
+        self.draw_continent_boundaries()
+        
+        # Draw game elements
+        self.draw_connections()
+        for territory_name, pos in self.territory_positions.items():
+            self.draw_territory(self.game.territories[territory_name], pos)
+        self.draw_game_info()
+        
+        # Show player info if active
+        if self.showing_info:
+            self.show_player_info()
+        # else:
+        #     print('showing info')
+        
+        # Update display
+        pygame.display.flip()
 
     def run(self):
         running = True
         while running:
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -613,38 +647,74 @@ class RiskGUI:
                             # Check for card trading at the start of reinforcement phase
                             if self.current_player.can_trade_cards():
                                 self.showing_card_prompt = True
+
                             # Show event popup and end turn
-                            event = random.choice(self.game.events)
+                            # event = random.choice(self.game.events)
+                            # self.show_event_popup(event)
+
+                            event = self.game.end_turn()
                             self.show_event_popup(event)
-                            self.game.end_turn()
+                            
                             # Update current player after turn ends
                             self.current_player = self.game.current_player
                             self.selected_territory = None
                             self.target_territory = None
+
+                            print(self.current_player.__class__)
+                            print(AIPlayer)
+
+                            print(self.current_player.__class__ is AIPlayer)
+                            # if it’s the AI’s turn, play out its entire turn in one go
+                            # if isinstance(self.current_player, AIPlayer):
+                            if isinstance(self.current_player, AIPlayer) or 'AIPlayer' in str(self.current_player.__class__):
+                                # 1) Reinforcement
+                                print(' ****************** Ai player')
+                                self.showing_event = False
+                                
+                                while self.current_player.reinforcements > 0:
+                                    self.handle_ai_reinforcement()
+                                print('reinforcement done')
+                                self.phase = 'attack'
+
+                                # 2) Attack phase
+                                # you’ll need to write a small helper (e.g. self.handle_ai_attack())
+                                # that chooses valid attacks until no more
+                                self.handle_ai_attack()
+                                print('attack done')
+
+                                # 3) Fortify phase
+                                # similarly, implement and call self.handle_ai_fortify()
+                                self.phase = 'fortify'
+                                self.handle_ai_fortify()
+                                print('fortify done')
+                                self.phase = 'reinforcement'
+
+                                # 4) End its turn (invoke the same steps you do on human end-turn)
+                                
+                                # No effect on playerrrr *********************************************************************************************************************************************************************************************************************************************************
+
+
+
+                                event = self.game.end_turn()
+                                self.show_event_popup(event)
+
+                                self.current_player = self.game.current_player
+
+                            else:
+                                print('*********** not ai player', type(self.current_player))
+
                     # Check if Player Info button was clicked
                     elif self.info_button_rect.collidepoint(mouse_pos):
                         self.showing_info = True
+                    elif self.event_button_rect.collidepoint(mouse_pos):
+                        self.showing_event = False
+                    elif self.infoClosure.collidepoint(mouse_pos):
+                        print('setting button false')
+                        self.showing_info = False
                     else:
                         self.handle_click(mouse_pos)
             
             if not self.showing_event and not self.showing_card_prompt:
-                # Clear screen with ocean blue background
-                self.screen.fill(self.OCEAN_BLUE)
-                
-                # Draw continent boundaries first
-                self.draw_continent_boundaries()
-                
-                # Draw game elements
-                self.draw_connections()
-                for territory_name, pos in self.territory_positions.items():
-                    self.draw_territory(self.game.territories[territory_name], pos)
-                self.draw_game_info()
-                
-                # Show player info if active
-                if self.showing_info:
-                    self.show_player_info()
-                
-                # Update display
-                pygame.display.flip()
+                self.render()
         
         pygame.quit() 
